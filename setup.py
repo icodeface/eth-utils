@@ -18,7 +18,7 @@ setup(
     include_package_data=True,
     install_requires=[
         "pysha3>=0.3",
-        "cytoolz>=0.8.2",
+        "toolz>=0.8.2",
     ],
     setup_requires=['setuptools-markdown'],
     py_modules=['eth_utils'],

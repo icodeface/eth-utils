@@ -79,5 +79,7 @@ from .types import (  # noqa: F401
     is_text,
 )
 
-
-__version__ = pkg_resources.get_distribution("eth-utils").version
+try:
+    __version__ = pkg_resources.get_distribution("eth-utils").version
+except BaseException:
+    __version__ = '0.7.3'

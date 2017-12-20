@@ -2,7 +2,7 @@ import collections
 import functools
 import itertools
 
-from cytoolz.functoolz import (
+from toolz.functoolz import (
     compose as _compose,
 )
 
