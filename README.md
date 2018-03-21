@@ -865,7 +865,7 @@ Operating System: Linux-4.10.0-42-generic-x86_64-with-Ubuntu-17.04-zesty
 
 pip freeze result:
 bumpversion==0.5.3
-cytoolz==0.9.0
+toolz==0.9.0
 flake8==3.4.1
 ipython==6.2.1
 pytest==3.3.2

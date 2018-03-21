@@ -1,10 +1,10 @@
-from cytoolz import (
+from toolz import (
     curry,
     keyfilter,
     merge_with,
     valfilter,
 )
-from cytoolz.functoolz import (
+from toolz.functoolz import (
     has_keywords,
     num_required_args,
 )

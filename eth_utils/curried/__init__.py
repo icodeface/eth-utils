@@ -1,6 +1,6 @@
 # flake8: noqa
 
-from cytoolz import (
+from toolz import (
     curry,
 )
 

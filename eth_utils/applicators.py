@@ -1,6 +1,6 @@
 import warnings
 
-from cytoolz.functoolz import (
+from toolz.functoolz import (
     compose,
     curry,
 )
