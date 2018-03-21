@@ -21,7 +21,7 @@ pip install eth-utils
 Clone the repository and then run:
 
 ```sh
-pip install -e . -r requirements-dev.txt
+pip install -e .[dev] eth-hash[pycryptodome]
 ```
 
 
@@ -56,9 +56,7 @@ brew install pandoc
 To release a new version:
 
 ```sh
-bumpversion $$VERSION_PART_TO_BUMP$$
-git push && git push --tags
-make release
+make release bump=$$VERSION_PART_TO_BUMP$$
 ```
 
 
@@ -67,19 +65,25 @@ make release
 The version format for this repo is `{major}.{minor}.{patch}` for stable, and
 `{major}.{minor}.{patch}-{stage}.{devnum}` for unstable (`stage` can be alpha or beta).
 
-To issue the next version in line, use bumpversion and specify which part to bump,
-like `bumpversion minor` or `bumpversion devnum`.
+To issue the next version in line, specify which part to bump,
+like `make release bump=minor` or `make release bump=devnum`.
 
-If you are in a beta version, `bumpversion stage` will switch to a stable.
+If you are in a beta version, `make release bump=stage` will switch to a stable.
 
 To issue an unstable version when the current version is stable, specify the
-new version explicitly, like `bumpversion --new-version 4.0.0-alpha.1 devnum`
+new version explicitly, like `make release bump="--new-version 4.0.0-alpha.1 devnum"`
 
 
 ## Documentation
 
 All functions can be imported directly from the `eth_utils` module
 
+Alternatively, you can get the curried version of the functions by importing them
+through the `curried` module like so:
+
+```py
+from eth_utils.curried import hexstr_if_str
+```
 
 ### ABI Utils
 
@@ -119,6 +123,228 @@ Returns the 4 byte function selector for the given function signature.
 b'\xc3x\n:'
 ```
 
+### Applicators
+
+Applicators help you apply "formatters" in various ways, most notably:
+
+- apply formatters to values by key
+- apply formatters to lists by index
+- conditionally applying a formatter
+- conditionally applying one of several formatters.
+
+Here we define a "formatter" as any `callable` that may be called with a single positional argument.
+It returns the "formatted" result. For example `int()` could be used as a formatter.
+
+Defining your own formatter is easy:
+
+```py
+def i_put_my_thing_down_flip_it_and_reverse_it(lyric):
+    return ''.join(reversed(lyric))
+```
+
+These tools often work nicely when curried. Import them from the `curried` module to get that
+capability built in, like `from eth_utils.curried import apply_formatter_if`.
+
+#### `apply_formatter_if(condition, formatter, value)` -> new_value
+
+This function will apply the formatter only if `bool(condition()) is True`.
+
+```py
+>>> from eth_utils.curried import apply_formatter_if, is_string
+
+>>> bool_if_string = apply_formatter_if(is_string, bool)
+
+>>> bool_if_string(1)
+1
+>>> bool_if_string('1')
+True
+>>> bool_if_string('')
+False
+```
+
+
+#### `apply_one_of_formatters(condition_formatter_pairs, value)` -> new_value
+
+This function will iterate through `condition_formatter_pairs`, and
+apply the first formatter which has a truthy condition. One of the formatters
+*must* match, or this function will raise a `ValueError`.
+
+```py
+>>> from eth_utils.curried import apply_one_of_formatters, is_string, is_list_like
+
+>>> multi_formatter = apply_one_of_formatters((
+    (is_list_like, tuple),
+    (is_string, i_put_my_thing_down_flip_it_and_reverse_it),
+)
+>>> multi_formatter('my thing')
+'gniht ym'
+>>> multi_formatter([1, 2])
+(1, 2)
+>>> multi_formatter(54)
+ValueError("The provided value did not satisfy any of the formatter conditions")
+```
+
+
+#### `apply_formatter_at_index(formatter, at_index, <list_like>)` -> <new_list_like>
+
+This function will apply the formatter to one element of `list_like`,
+at position `at_index`, and return a new iterable with that element replaced.
+The returned value will be the same type as the one passed into the third argument.
+
+```py
+>>> from eth_utils.curried import apply_formatter_at_index
+
+>>> targetted_formatter = apply_formatter_at_index(bool, 1)
+
+>>> targetted_formatter((1, 2, 3))
+(1, True, 3)
+
+>>> targetted_formatter([1, 2, 3])
+[1, True, 3]
+```
+
+
+#### `apply_formatter_to_array(formatter, <list_like>)` -> <new_list_like>
+
+This function will apply the formatter to each element of `list_like`.
+It returns the same type as the `list_like` argument
+
+```py
+>>> from eth_utils.curried import apply_formatter_to_array
+
+>>> map_int = apply_formatter_to_array(int)
+
+>>> map_int((1.2, 3.4, 5.6))
+(1, 3, 5)
+
+>>> map_int([1.2, 3.4, 5.6])
+[1, 3, 5]
+```
+
+
+#### `apply_formatters_to_sequence(formatters, <list_like>)` -> <new_list_like>
+
+This function will apply each formatter at to the list-like value, at the
+position it was supplied. It returns the same time as the `list_like` argument.
+For example:
+
+```py
+>>> from eth_utils.curried import apply_formatters_to_sequence
+
+>>> list_formatter = apply_formatters_to_sequence([bool, int, str])
+
+>>> list_formatter([1.2, 3.4, 5.6])
+[True, 3, '5.6']
+
+>>> list_formatter((1.2, 3.4, 5.6))
+(True, 3, '5.6')
+
+# Formatters and list-like value must be the same length
+
+>>> list_formatter((1.2, 3.4, 5.6, 7.8))
+IndexError: Too few formatters for sequence: 3 formatters for (1.2, 3.4, 5.6, 7.8)
+
+>>> list_formatter((1.2, 3.4))
+IndexError: Too many formatters for sequence: 3 formatters for (1.2, 3.4)
+```
+
+
+#### `combine_argument_formatters(*formatters)` -> lambda <list_like>: <new_list_like>
+
+**DEPRECATED**
+
+You can replace all current versions of:
+
+```py
+>>> from eth_utils import combine_argument_formatters
+
+>>> list_formatter = combine_argument_formatters(bool, int, str)
+```
+
+With the newer, preferred:
+
+```py
+>>> from eth_utils.curried import apply_formatters_to_sequence
+
+>>> list_formatter = apply_formatters_to_sequence((bool, int, str))
+```
+
+The old usage works like:
+
+Combine several formatters to be applied to a list-like value, each formatter
+at the position it was supplied. The new formatter will return the same type as
+it was supplied. For example:
+
+```py
+>>> from eth_utils import combine_argument_formatters
+
+>>> list_formatter = combine_argument_formatters(bool, int, str)
+
+>>> list_formatter([1.2, 3.4, 5.6])
+[True, 3, '5.6']
+
+>>> list_formatter((1.2, 3.4, 5.6))
+(True, 3, '5.6')
+
+# it will pass through items longer than the number of formatters supplied
+>>> list_formatter((1.2, 3.4, 5.6, 7.8))
+[True, 3, '5.6', 7.8]
+```
+
+
+#### `apply_formatters_to_dict(formatter_dict, <dict_like>)` -> `dict`
+
+This function will apply the formatter to the element with
+the matching key in `dict_like`, passing through values with keys that
+have no matching formatter.
+
+```py
+>>> from eth_utils.curried import apply_formatters_to_dict
+
+>>> dict_formatter = apply_formatters_to_dict({
+    'should_be_int': int,
+    'should_be_bool': bool,
+})
+
+>>> dict_formatter({
+    'should_be_int': 1.2,
+    'should_be_bool': 3.4,
+    'pass_through': 5.6,
+})
+{
+    'should_be_int': 1,
+    'should_be_bool': True,
+    'pass_through': 5.6,
+}
+```
+
+
+#### `apply_key_map(formatter_dict, <dict_like>)` -> `dict`
+
+This function will rename keys from <dict_like> using the
+lookups provided in `formatter_dict`. It will pass through any unspecified keys.
+
+```py
+>>> from eth_utils.curried import apply_key_map
+
+>>> dict_key_map = apply_key_map({
+    'black': 'orange',
+    'Internet': 'Ethereum',
+})
+
+>>> dict_key_map({
+    'black': 1.2,
+    'Internet': 3.4,
+    'pass_through': 5.6,
+})
+{
+    'orange': 1.2,
+    'Ethereum': 3.4,
+    'pass_through': 5.6,
+}
+```
+
+
 
 ### Address Utils
 
@@ -126,12 +352,12 @@ b'\xc3x\n:'
 
 Returns `True` if the `value` is one of the following accepted address formats.
 
-- 20 byte hexidecimal, upper/lower/mixed case, with or without `0x` prefix:
+- 20 byte hexadecimal, upper/lower/mixed case, with or without `0x` prefix:
     - `'d3cda913deb6f67967b99d67acdfa1712c293601'`
     - `'0xd3cda913deb6f67967b99d67acdfa1712c293601'`
     - `'0xD3CDA913DEB6F67967B99D67ACDFA1712C293601'`
     - `'0xd3CdA913deB6f67967B99D67aCDFa1712C293601'`
-- 20 byte hexidecimal padded to 32 bytes with null bytes, upper/lower/mixed case, with or without `0x` prefix:
+- 20 byte hexadecimal padded to 32 bytes with null bytes, upper/lower/mixed case, with or without `0x` prefix:
     - `'000000000000000000000000d3cda913deb6f67967b99d67acdfa1712c293601'`
     - `'000000000000000000000000d3cda913deb6f67967b99d67acdfa1712c293601'`
     - `'0x000000000000000000000000d3cda913deb6f67967b99d67acdfa1712c293601'`
@@ -179,7 +405,7 @@ False
 
 #### `is_hex_address(value)` => bool
 
-Return `True` if the value is a 20 byte hexidecimal encoded string in any of
+Return `True` if the value is a 20 byte hexadecimal encoded string in any of
 upper/lower/mixed casing, with or without the `0x` prefix.  Otherwise return
 `False`
 
@@ -251,44 +477,6 @@ False
 False
 ```
 
-#### `is_32byte_address(value)` -> bool
-
-Return `True` if the value is a 20 byte address that has been padded to 32
-bytes.  This function allows both bytes or hexidecimal encoded strings.
-Hexidecimal strings may optionally be `0x` prefixed.  The padding bytes
-**must** be zeros.
-
-> Note: this method returns false for the zero address.
-
-```python
->>> is_32byte_address('d3cda913deb6f67967b99d67acdfa1712c293601')
-False
->>> is_32byte_address('0xd3cda913deb6f67967b99d67acdfa1712c293601')
-False
->>> is_32byte_address('0xD3CDA913DEB6F67967B99D67ACDFA1712C293601')
-False
->>> is_32byte_address('0xd3CdA913deB6f67967B99D67aCDFa1712C293601')
-False
->>> is_32byte_address('000000000000000000000000d3cda913deb6f67967b99d67acdfa1712c293601')
-True
->>> is_32byte_address('000000000000000000000000d3cda913deb6f67967b99d67acdfa1712c293601')
-True
->>> is_32byte_address('0x000000000000000000000000d3cda913deb6f67967b99d67acdfa1712c293601')
-True
->>> is_32byte_address('0x000000000000000000000000D3CDA913DEB6F67967B99D67ACDFA1712C293601')
-True
->>> is_32byte_address('0x000000000000000000000000d3CdA913deB6f67967B99D67aCDFa1712C293601')
-True
->>> is_32byte_address('\xd3\xcd\xa9\x13\xde\xb6\xf6yg\xb9\x9dg\xac\xdf\xa1q,)6\x01')
-False
->>> is_32byte_address('\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xd3\xcd\xa9\x13\xde\xb6\xf6yg\xb9\x9dg\xac\xdf\xa1q,)6\x01')
-True
->>> is_32byte_address('0x0000000000000000000000000000000000000000000000000000000000000000')
-False
->>> is_32byte_address('\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00')
-False
-```
-
 
 #### `is_canonical_address(value)` -> bool
 
@@ -348,7 +536,7 @@ False
 Returns `True` if the `value` is an address in its normalized form.
 
 The normalized representation of an address is the lowercased 20 byte
-hexidecimal format.
+hexadecimal format.
 
 ```python
 >>> is_normalized_address('0xd3CdA913deB6f67967B99D67aCDFa1712C293601')
@@ -425,17 +613,171 @@ Given any valid representation of an address return the normalized representatio
 '0xc305c901078781c232a2a521c2af7980f8385ee9',
 ```
 
+### Conversion Utils
+
+
+These methods convert values using standard practices in the Ethereum ecosystem.
+For example, strings are encoded to binary using UTF-8.
+
+Because there is no reliable way to distinguish between text and a hex-encoded
+bytestring, you must explicitly specify which of the two is being supplied when
+passing in a `str`.
+
+Only supply one of the arguments:
+
+#### `to_bytes(<bytes/int/bool>, text=<str>, hexstr=<str>)` -> bytes
+
+Takes a variety of inputs and returns its bytes equivalent. Text gets encoded as UTF-8.
+
+```py
+>>> to_bytes(0)
+b'\x00'
+>>> to_bytes(0x000F)
+b'\x0f'
+>>> to_bytes(b'')
+b''
+>>> to_bytes(b'\x00\x0F')
+b'\x00\x0f'
+>>> to_bytes(False)
+b'\x00'
+>>> to_bytes(True)
+b'\x01'
+>>> to_bytes(hexstr='0x000F')
+b'\x00\x0f'
+>>> to_bytes(hexstr='000F')
+b'\x00\x0f'
+>>> to_bytes(text='')
+b''
+>>> to_bytes(text='cowmö')
+b'cowm\xc3\xb6'
+```
+
+#### `to_hex(<bytes/int/bool>, text=<str>, hexstr=<str>)` -> str
+
+Takes a variety of inputs and returns it in its hexadecimal representation.
+It follows the rules for converting to hex in the JSON-RPC spec. Roughly,
+it leaves leading 0s on bytes input, and trims leading zeros on int input.
+
+```py
+>>> to_hex(0)
+'0x0'
+>>> to_hex(1)
+'0x1'
+>>> to_hex(0x0)
+'0x0'
+>>> to_hex(0x000F)
+'0xf'
+>>> to_hex(b'')
+'0x'
+>>> to_hex(b'\x00\x0F')
+'0x000f'
+>>> to_hex(False)
+'0x0'
+>>> to_hex(True)
+'0x1'
+>>> to_hex(hexstr='0x000F')
+'0x000f'
+>>> to_hex(hexstr='000F')
+'0x000f'
+>>> to_hex(text='')
+'0x'
+>>> to_hex(text='cowmö')
+'0x636f776dc3b6'
+```
+
+#### `to_int(<bytes/int/bool>, text=<str>, hexstr=<str>)` -> int
+
+Takes a variety of inputs and returns its integer equivalent.
+
+
+```py
+>>> to_int(0)
+0
+>>> to_int(0x000F)
+15
+>>> to_int(b'\x00\x0F')
+15
+>>> to_int(False)
+0
+>>> to_int(True)
+1
+>>> to_int(hexstr='0x000F')
+15
+>>> to_int(hexstr='000F')
+15
+```
+
+#### `to_text(<bytes/int/bool>, text=<str>, hexstr=<str>)` -> str
+
+Takes a variety of inputs and returns its string equivalent. Text gets decoded as UTF-8.
+
+```py
+>>> Web3.toText(0x636f776dc3b6)
+'cowmö'
+>>> Web3.toText(b'cowm\xc3\xb6')
+'cowmö'
+>>> Web3.toText(hexstr='0x636f776dc3b6')
+'cowmö'
+>>> Web3.toText(hexstr='636f776dc3b6')
+'cowmö'
+>>> Web3.toText(text='cowmö')
+'cowmö'
+```
+
 ### Crypto Utils
 
+Because there is no reliable way to distinguish between text and a hex-encoded
+bytestring, you must explicitly specify which of the two is being supplied when
+passing in a `str`.
 
-#### `keccak(value)` -> bytes
+Only supply one of the arguments:
 
-Given any string returns the `sha3/keccak` hash.  If `value` is not a byte
-string it will be converted using the `force_bytes` function.
+#### `keccak(<bytes/int/bool>, text=<str>, hexstr=<str>)` -> bytes
 
 ```python
->>> keccak('')
+>>> keccak(text='')
 b"\xc5\xd2F\x01\x86\xf7#<\x92~}\xb2\xdc\xc7\x03\xc0\xe5\x00\xb6S\xca\x82';{\xfa\xd8\x04]\x85\xa4p"
+
+# A series of equivalent hash inputs:
+
+>>> keccak(text='☢')
+b'\x85\xe8\x07"\xeb\x93\r\xe9;\xcc\xa8{\xa5\xdf\xda\x89\n\xa12\x95\xae\xad.\xec\xc9\x0b\xb2\xd9z\x14\x93\x16'
+
+>>> keccak(0xe298a2)
+b'\x85\xe8\x07"\xeb\x93\r\xe9;\xcc\xa8{\xa5\xdf\xda\x89\n\xa12\x95\xae\xad.\xec\xc9\x0b\xb2\xd9z\x14\x93\x16'
+
+>>> keccak(b'\xe2\x98\xa2')
+b'\x85\xe8\x07"\xeb\x93\r\xe9;\xcc\xa8{\xa5\xdf\xda\x89\n\xa12\x95\xae\xad.\xec\xc9\x0b\xb2\xd9z\x14\x93\x16'
+
+>>> keccak(hexstr='0xe298a2')
+b'\x85\xe8\x07"\xeb\x93\r\xe9;\xcc\xa8{\xa5\xdf\xda\x89\n\xa12\x95\xae\xad.\xec\xc9\x0b\xb2\xd9z\x14\x93\x16'
+```
+
+**Please Note** - When using Python's native hex literals, python converts the hex to an int,
+so leading 0 bytes are truncated. But all other formats maintain zeros on the left. Hex literals
+are only padded until a whole number of bytes are provided to keccak. For example:
+
+```py
+>>> keccak(0xe298a2)
+b'\x85\xe8\x07"\xeb\x93\r\xe9;\xcc\xa8{\xa5\xdf\xda\x89\n\xa12\x95\xae\xad.\xec\xc9\x0b\xb2\xd9z\x14\x93\x16'
+
+>>> keccak(0x0e298a2)
+b'\x85\xe8\x07"\xeb\x93\r\xe9;\xcc\xa8{\xa5\xdf\xda\x89\n\xa12\x95\xae\xad.\xec\xc9\x0b\xb2\xd9z\x14\x93\x16'
+
+>>> keccak(0x00e298a2)
+b'\x85\xe8\x07"\xeb\x93\r\xe9;\xcc\xa8{\xa5\xdf\xda\x89\n\xa12\x95\xae\xad.\xec\xc9\x0b\xb2\xd9z\x14\x93\x16'
+
+>>> keccak(0x000e298a2)
+b'\x85\xe8\x07"\xeb\x93\r\xe9;\xcc\xa8{\xa5\xdf\xda\x89\n\xa12\x95\xae\xad.\xec\xc9\x0b\xb2\xd9z\x14\x93\x16'
+
+>>> keccak(hexstr='0x0e298a2')
+b'i\x0f$\xbd\xbe\xf7c\xbb\xb9M\xd9\x12H"\x9f\x1f\x87\\E\xa36\xc2\xea,\x8f.\r\xf5\x95\xdc\x19\x9b'
+
+>>> keccak(hexstr='0x00e298a2')
+b'i\x0f$\xbd\xbe\xf7c\xbb\xb9M\xd9\x12H"\x9f\x1f\x87\\E\xa36\xc2\xea,\x8f.\r\xf5\x95\xdc\x19\x9b'
+
+>>> keccak(hexstr='0x000e298a2')
+b'!$Ezy\xdeU<\xec\x1f\xd1\x10\x05\xff\x11\xfc=J\xcf\xd5H\x0f\xb3c\xcc\xb5\xae\xb1\x1eA\x8b\xd3'
 ```
 
 ### Currency Utils
@@ -506,6 +848,72 @@ Decimal('1.23456789E-10')
 ```
 
 
+### Debug Utils
+
+#### Generate environment info
+
+At the shell:
+
+```sh
+$ python -m eth_utils
+
+Python version:
+3.5.3 (default, Nov 23 2017, 11:34:05)
+[GCC 6.3.0 20170406]
+
+Operating System: Linux-4.10.0-42-generic-x86_64-with-Ubuntu-17.04-zesty
+
+pip freeze result:
+bumpversion==0.5.3
+cytoolz==0.9.0
+flake8==3.4.1
+ipython==6.2.1
+pytest==3.3.2
+virtualenv==15.1.0
+... etc
+```
+
+
+### Decorators
+
+#### `@combomethod`
+
+Decorates methods in a class that can be called as both an instance method
+or a `@classmethod`.
+
+Use the decorator like so:
+
+```py
+from eth_utils import combomethod
+
+class Storage:
+    val = 1
+
+    @combomethod
+    def get(combo):
+        if isinstance(combo, type):
+            print("classmethod call")
+        elif isinstance(combo, Storage):
+            print("instance method call")
+        else:
+            raise TypeError("Unreachable, unless you really monkey around")
+        return combo.val
+```
+
+As usual, instances create their own copy on assignment.
+
+```py
+>>> store = Storage()
+>>> store.val = 2
+>>> store.get()
+instance method call
+2
+>>> Storage.get()
+classmethod call
+1
+```
+
+
 ### Encoding Utils
 
 #### `big_endian_to_int(value)` -> integer
@@ -534,37 +942,6 @@ b'\x00'
 b'\x01'
 >>> int_to_big_endian(256)
 b'\x01\x00'
-```
-
-
-### Formatting Utils
-
-#### `pad_left(value, to_size, pad_with)` -> string
-
-Returns `value` padded to the length specified by `to_size` with the string `pad_with`.  
-
-
-```python
->>> pad_left('test', 6, '0')
-'00test'
->>> pad_left('testing', 6, '0')
-'testing'
->>> pad_left('test', 8, '123')
-'12312test'
-```
-
-#### `pad_right(value, to_size, pad_with)` -> string
-
-Returns `value` padded to the length specified by `to_size` with the string `pad_with`.  
-
-
-```python
->>> pad_right('test', 6, '0')
-'test00'
->>> pad_right('testing', 6, '0')
-'testing'
->>> pad_right('test', 8, '123')
-'test12312'
 ```
 
 
@@ -756,7 +1133,7 @@ b'\x124V'
 
 #### `encode_hex(value)` -> string
 
-Returns `value` encoded into a hexidecimal representation with a `0x` prefix
+Returns `value` encoded into a hexadecimal representation with a `0x` prefix
 
 ```python
 >>> encode_hex('\x01\x02\x03')
@@ -778,7 +1155,7 @@ True
 
 #### `is_hex(value)` -> bool
 
-Returns `True` if `value` is a hexidecimal encoded string.
+Returns `True` if `value` is a hexadecimal encoded string of text type.
 
 ```python
 >>> is_hex('')
@@ -788,11 +1165,11 @@ False
 >>> is_hex('0x')
 True
 >>> is_hex(b'0x')
-True
+False
 >>> is_hex('0X')
 True
 >>> is_hex(b'0X')
-True
+False
 >>> is_hex('1234567890abcdef')
 True
 >>> is_hex('0x1234567890abcdef')
@@ -821,115 +1198,6 @@ Returns `value` with the `0x` prefix stripped.  If the value does not have a
 '12345'
 >>> remove_0x_prefix(b'0x12345')
 b'12345'
-```
-
-
-### String Utils
-
-#### `coerce_args_to_bytes(callable)` -> callable
-
-Decorator which will convert any string arguments both positional or keyword
-into byte strings using the `force_bytes` function.  This is a recursive
-operation which will reach down into mappings and list-like objects as well.
-
-```python
->>> @coerce_args_to_bytes
-... def do_thing(*args):
-...     return args
-...
->>> do_thing('a', 1, b'a-byte-string', ['a', b'b', 1], {'a': 'a', 'b': ['x', b'y']})
-(b'a', 1, b'a-byte-string', [b'a', b'b', 1], {'a': b'a', 'b': [b'x', b'y']})
-```
-
-#### `coerce_args_to_text(callable)` -> callable
-
-Decorator which will convert any string arguments both positional or keyword
-into text strings using the `force_text` function.  This is a recursive
-operation which will reach down into mappings and list-like objects as well.
-
-```python
->>> @coerce_args_to_text
-... def do_thing(*args):
-...     return args
-...
->>> do_thing('a', 1, b'a-byte-string', ['a', b'b', 1], {'a': 'a', 'b': ['x', b'y']})
-('a', 1, 'a-byte-string', ['a', 'b', 1], {'a': 'a', 'b': ['x', 'y']})
-```
-
-#### `coerce_return_to_bytes(callable)` -> callable
-
-Decorator which will convert any string return values into byte strings using
-the `force_text` function.  This is a recursive operation which will reach down
-into mappings and list-like objects as well.
-
-```python
->>> @coerce_return_to_bytes
-... def do_thing(*args):
-...     return args
-...
->>> do_thing('a', 1, b'a-byte-string', ['a', b'b', 1], {'a': 'a', 'b': ['x', b'y']})
-(b'a', 1, b'a-byte-string', [b'a', b'b', 1], {'a': b'a', 'b': [b'x', b'y']})
-```
-
-#### `coerce_return_to_text(callable)` -> callable
-
-Decorator which will convert any string return values into text strings using
-the `force_text` function.  This is a recursive operation which will reach down
-into mappings and list-like objects as well.
-
-```python
->>> @coerce_return_to_bytes
-... def do_thing(*args):
-...     return args
-...
->>> do_thing('a', 1, b'a-byte-string', ['a', b'b', 1], {'a': 'a', 'b': ['x', b'y']})
-('a', 1, 'a-byte-string', ['a', 'b', 1], {'a': 'a', 'b': ['x', 'y']})
-```
-
-#### `force_bytes(value, encoding='iso-8859-1')` -> text
-
-Returns `value` encoded into a byte string using the provided encoding.  By
-default this uses `iso-8859-1` as it can handle all byte values between `0-255`
-(unlike `utf8`)
-
-```python
->>> force_bytes('abcd')
-b'abcd'
->>> force_bytes(b'abcd')
-b'abcd'
-```
-
-#### `force_obj_to_bytes(value)` -> value
-
-Returns `value` with all string elements converted to byte strings by
-recursivly traversing mappings and list-like elements.
-
-```python
->>> force_obj_to_bytes(('a', 1, b'a-byte-string', ['a', b'b', 1], {'a': 'a', 'b': ['x', b'y']}))
-(b'a', 1, b'a-byte-string', [b'a', b'b', 1], {'a': b'a', 'b': [b'x', b'y']})
-```
-
-#### `force_obj_to_text(value)` -> value
-
-Returns `value` with all string elements converted to text strings by
-recursivly traversing mappings and list-like elements.
-
-```python
->>> force_obj_to_text(('a', 1, b'a-byte-string', ['a', b'b', 1], {'a': 'a', 'b': ['x', b'y']}))
-('a', 1, 'a-byte-string', ['a', 'b', 1], {'a': 'a', 'b': ['x', 'y']})
-```
-
-#### `force_text(value, encoding='iso-8859-1')` -> text
-
-Returns `value` decoded into a text string using the provided encoding.  By
-default this uses `iso-8859-1` as it can handle all byte values between `0-255`
-(unlike `utf8`)
-
-```python
->>> force_text(b'abcd')
-'abcd'
->>> force_text('abcd')
-'abcd'
 ```
 
 
