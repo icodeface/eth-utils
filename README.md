@@ -21,7 +21,7 @@ pip install eth-utils
 Clone the repository and then run:
 
 ```sh
-pip install -e .[dev] eth-hash[pycryptodome]
+pip install -e .[dev] eth-hash[pycryptodomex]
 ```
 
 
